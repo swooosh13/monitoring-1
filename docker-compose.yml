@@ -1,0 +1,145 @@
+version: '3'
+
+services:
+  # REMOTE
+  db:
+    image: mariadb
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    volumes:
+      - mysql-datavolume:/var/lib/mysql
+    restart: unless-stopped
+    ports:
+      - 3306:3306
+
+  wp:
+    image: wordpress:fpm-alpine
+    environment:
+      WORDPRESS_DB_HOST: db:3306
+      WORDPRESS_DB_NAME: ${MYSQL_DATABASE}
+      WORDPRESS_DB_USER: ${MYSQL_USER}
+      WORDPRESS_DB_PASSWORD: ${MYSQL_PASSWORD}
+      WORDPRESS_TABLE_PREFIX: ${WORDPRESS_TABLE_PREFIX}
+    depends_on:
+      - db
+    volumes:
+      - ${WP_CONTENT}:/var/www/html/wp-content
+      - wordpress:/var/www/html
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    volumes:
+      - ./nginx:/etc/nginx/conf.d
+      - wordpress:/var/www/html
+      - ${WP_CONTENT}:/var/www/html/wp-content
+      # - ./le/certs:/etc/letsencrypt
+      # - ./le/data:/data/letsencrypt
+    ports:
+      - '80:80'
+      - '443:443'
+    depends_on:
+      - wp
+    restart: unless-stopped
+  
+  wp-exporter:
+    image: erwin82/wordpress_exporter:latest
+    environment:
+      WORDPRESS_DB_NAME: ${MYSQL_DATABASE}
+      WORDPRESS_DB_USER: ${MYSQL_USER}
+      WORDPRESS_DB_PASSWORD: ${MYSQL_PASSWORD}
+      WORDPRESS_DB_HOST: db
+      WORDPRESS_DB_PORT: 3306
+    ports:
+      - 8888:8888
+    depends_on:
+      - wp
+
+  nginx-prometheus-exporter:
+    image: nginx/nginx-prometheus-exporter:1.0
+    container_name: prometheus-nginx-exporter
+    restart: always
+    env_file:
+      .env
+    command:
+      - -nginx.scrape-uri=https://nginx/metrics
+    ports: 
+      - 9113:9113
+    depends_on:
+      - nginx
+  
+  prometheus-node-exporter:
+    image: prom/node-exporter:v1.7.0
+    container_name: prometheus-node-exporter
+    restart: always
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command: 
+      - '--path.procfs=/host/proc' 
+      - '--path.sysfs=/host/sys'
+      - --collector.filesystem.ignored-mount-points
+      - "^/(sys|proc|dev|host|etc|rootfs/var/lib/docker/containers|rootfs/var/lib/docker/overlay2|rootfs/run/docker/netns|rootfs/var/lib/docker/aufs)($$|/)"
+    privileged: true
+    depends_on:
+      - nginx-prometheus-exporter
+    expose:
+      - 9100
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.47.0
+    container_name: cadvisor
+    restart: unless-stopped
+    privileged: true
+    ports:
+      - "8081:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    depends_on:
+      - prometheus-node-exporter
+  
+  db-exporter:
+    image: quay.io/prometheus/mysqld-exporter
+    container_name: mysqld-exporter
+    command:
+     - "--mysqld.username=exporter:exporterpassword"
+     - "--mysqld.address=db:3306"
+     - "--collect.info_schema.processlist"
+     - "--collect.info_schema.innodb_metrics" 
+     - "--collect.info_schema.tablestats"
+     - "--collect.info_schema.tables"
+     - "--collect.info_schema.userstats"
+     - "--collect.engine_innodb_status"
+    ports:
+      - 9104:9104
+    depends_on:
+      - db
+
+  # MONITORING
+  prometheus:
+    image: prom/prometheus:v2.45.2
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./prometheus/data:/prometheus
+    container_name: prometheus
+    restart: always
+    depends_on:
+      - cadvisor
+    ports:
+      - 9090:9090
+  
+  
+  
+  
+
+volumes:
+  mysql-datavolume:
+  wordpress:
