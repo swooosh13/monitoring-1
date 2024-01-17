@@ -127,8 +127,8 @@ services:
   prometheus:
     image: prom/prometheus:v2.45.2
     volumes:
-      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
-      - ./prometheus/data:/prometheus
+      - ./gap-1/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./gap-1/data:/prometheus
     container_name: prometheus
     restart: always
     depends_on:
